@@ -1,3 +1,4 @@
+#pragma once
 #include "ofMain.h"
 
 // References.
@@ -242,7 +243,7 @@ protected:
 			{
 				blur_shader.begin();
 				blur_shader.setUniformTexture("tex", p.front->getTexture(), 1);
-				blur_shader.setUniform2f("direction", 0, 1. / p.front->getWidth());
+				blur_shader.setUniform2f("direction", 0, 1. / p.front->getHeight());
 				p.mesh.draw();
 				blur_shader.end();
 			}
