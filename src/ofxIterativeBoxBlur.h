@@ -18,7 +18,7 @@ public:
 		, downsample_scale(0.5)
 	{}
 	
-	void process(ofFbo& inout) { process(inout.getTextureReference(), inout); }
+	void process(ofFbo& inout) { process(inout.getTexture(), inout); }
 	
 	void process(ofTexture& in, ofFbo& out)
 	{
@@ -56,10 +56,13 @@ public:
 			blur_shader.end();
 
 			ofTexture& tex = renderPass(index, in);
-			
+
 			// write to out
 			out.begin();
 			{
+                glEnable(GL_BLEND);
+                glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_SRC_ALPHA,GL_ONE);
+                ofClear(255);
 				tex.draw(0, 0, out.getWidth(), out.getHeight());
 			}
 			out.end();
@@ -68,6 +71,9 @@ public:
 		{
 			out.begin();
 			{
+                glEnable(GL_BLEND);
+                glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_SRC_ALPHA,GL_ONE);
+                ofClear(255);
 				in.draw(0, 0, out.getWidth(), out.getHeight());
 			}
 			out.end();
@@ -111,8 +117,7 @@ protected:
 	};
 	
 	struct PingPong {
-		ofFbo fbo[2];
-		
+        ofFbo fbo[2];
 		ofFbo *front, *back;
 		
 		ofVboMesh mesh;
@@ -120,28 +125,28 @@ protected:
 		
 		void allocate(float w, float h, float scale) {
 			this->scale = scale;
-			
+
 			ofFbo::Settings s;
 			s.width = w * scale;
 			s.height = h * scale;
-			s.internalformat = GL_RGB;
+			s.internalformat = GL_RGBA;
 			s.minFilter = GL_LINEAR;
 			s.maxFilter = GL_LINEAR;
 			s.textureTarget = GL_TEXTURE_2D;
 			fbo[0].allocate(s);
 			fbo[1].allocate(s);
 			
-			ofVec3f TC = fbo[0].getTextureReference().getCoordFromPercent(1, 1);
+			ofVec3f TC = fbo[0].getTexture().getCoordFromPercent(1, 1);
 			
 			mesh.setMode(OF_PRIMITIVE_TRIANGLE_STRIP);
 			mesh.addTexCoord(ofVec2f(0, 0));
-			mesh.addVertex(ofVec2f(0, 0));
+            mesh.addVertex(glm::vec3(0, 0, 0));
 			mesh.addTexCoord(ofVec2f(TC.x, 0));
-			mesh.addVertex(ofVec2f(s.width, 0));
+			mesh.addVertex(glm::vec3(s.width, 0, 0));
 			mesh.addTexCoord(ofVec2f(0, TC.y));
-			mesh.addVertex(ofVec2f(0, s.height));
+			mesh.addVertex(glm::vec3(0, s.height, 0));
 			mesh.addTexCoord(ofVec2f(TC.x, TC.y));
-			mesh.addVertex(ofVec2f(s.width, s.height));
+			mesh.addVertex(glm::vec3(s.width, s.height, 0));
 			
 			front = &fbo[0];
 			back = &fbo[1];
@@ -184,16 +189,16 @@ protected:
 				const int N = 16;
 				float delta = blur_size / float(N);
 
-				vec3 color = texture2D(tex, TC).rgb;
+				vec4 color = texture2D(tex, TC).rgba;
 
 				for (int i = 0; i < N; i++) {
 					vec2 d = direction * (float(i) * delta);
-					color += texture2D(tex, TC + d).rgb;
-					color += texture2D(tex, TC - d).rgb;
+					color += texture2D(tex, TC + d).rgba;
+					color += texture2D(tex, TC - d).rgba;
 				}
 				color /= float(N) * 2 + 1;
 
-				gl_FragColor = vec4(color, 1.0);
+                gl_FragColor = color; //vec4(color, 1.0);
 			}
 		));
 		blur_shader.linkProgram();
@@ -203,45 +208,49 @@ protected:
 	
 	ofTexture& renderPass(int index, ofTexture& in)
 	{
+        PingPong &p = pingpong[index];
 		// write to front
-		pingpong[index].front->begin();
-		{
-			ofSetColor(255);
-			in.draw(0, 0,
-					pingpong[index].front->getWidth(),
-					pingpong[index].front->getHeight());
-		}
-		pingpong[index].front->end();
+		p.front->begin();
+        {
+            glEnable(GL_BLEND);
+            glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_SRC_ALPHA,GL_ONE);
+            ofClear(255);
+            ofSetColor(255);
+            in.draw(0, 0,
+                    p.front->getWidth(),
+                    p.front->getHeight());
+        }
+        p.front->end();
 		
 		for (int i = 0; i < num_iteration; i++)
 		{
 			// horizontal pass
-			pingpong[index].back->begin();
+			p.back->begin();
 			{
 				blur_shader.begin();
-				blur_shader.setUniformTexture("tex", pingpong[index].front->getTextureReference(), 1);
-				blur_shader.setUniform2f("direction", 1. / pingpong[index].front->getWidth(), 0);
-				pingpong[index].mesh.draw();
+				blur_shader.setUniformTexture("tex", p.front->getTexture(), 1);
+				blur_shader.setUniform2f("direction", 1. / p.front->getWidth(), 0);
+				p.mesh.draw();
 				blur_shader.end();
 			}
-			pingpong[index].back->end();
+			p.back->end();
 			
-			pingpong[index].swap();
+			p.swap();
 			
 			// vertical pass
-			pingpong[index].back->begin();
+			p.back->begin();
 			{
 				blur_shader.begin();
-				blur_shader.setUniformTexture("tex", pingpong[index].front->getTextureReference(), 1);
-				blur_shader.setUniform2f("direction", 0, 1. / pingpong[index].front->getWidth());
-				pingpong[index].mesh.draw();
+				blur_shader.setUniformTexture("tex", p.front->getTexture(), 1);
+				blur_shader.setUniform2f("direction", 0, 1. / p.front->getWidth());
+				p.mesh.draw();
 				blur_shader.end();
 			}
-			pingpong[index].back->end();
+			p.back->end();
 			
-			pingpong[index].swap();
+			p.swap();
 		}
 		
-		return pingpong[index].front->getTextureReference();
+		return p.front->getTexture();
 	}
 };
