@@ -36,7 +36,7 @@ public:
 		if (inited == false)
 		{
 			inited = true;
-			init(in.getWidth(), in.getHeight());
+			init(in.getWidth(), in.getHeight(), in.getTextureData().glInternalFormat);
 		}
 
 		if (radius > 0)
@@ -124,13 +124,13 @@ protected:
 		ofVboMesh mesh;
 		float scale;
 		
-		void allocate(float w, float h, float scale) {
+		void allocate(float w, float h, float scale, GLint internalFormat = GL_RGBA) {
 			this->scale = scale;
 
 			ofFbo::Settings s;
 			s.width = w * scale;
 			s.height = h * scale;
-			s.internalformat = GL_RGBA;
+			s.internalformat = internalFormat;
 			s.minFilter = GL_LINEAR;
 			s.maxFilter = GL_LINEAR;
 			s.textureTarget = GL_TEXTURE_2D;
@@ -158,50 +158,108 @@ protected:
 	
 	vector<PingPong> pingpong;
 
-	void init(float w, float h)
+	void init(float w, float h, GLint internalFormat)
 	{
-		loadShader();
-
+        if (ofIsGLProgrammableRenderer()) {
+            loadShaderGL3();
+        } else {
+            loadShaderGL2();
+        }
+		
 		pingpong.resize(NUM_DOWNSAMPLE_BUFFERS);
 		
 		float r = downsample_scale;
 
 		for (int i = 0; i < NUM_DOWNSAMPLE_BUFFERS; i++)
 		{
-			pingpong[i].allocate(w, h, r);
+			pingpong[i].allocate(w, h, r, internalFormat);
 			r *= 0.5;
 		}
 	}
-	
-	void loadShader()
-	{
+    
+    void loadShaderGL2()
+    {
 #define GLSL(CODE) "#version 120\n" \
-	"#ifdef GL_ES\nprecision mediump float;\n#endif\n" \
+    "#ifdef GL_ES\nprecision mediump float;\n#endif\n" \
+    #CODE
+        
+        blur_shader.setupShaderFromSource(GL_FRAGMENT_SHADER, GLSL(
+        uniform sampler2D tex;
+        uniform vec2 direction;
+        uniform float blur_size;
+
+        void main() {
+           vec2 TC = gl_TexCoord[0].xy;
+           
+           const int N = 16;
+           float delta = blur_size / float(N);
+           
+           vec4 color = texture2D(tex, TC).rgba;
+           
+           for (int i = 0; i < N; i++) {
+               vec2 d = direction * (float(i) * delta);
+               color += texture2D(tex, TC + d).rgba;
+               color += texture2D(tex, TC - d).rgba;
+           }
+           color /= float(N) * 2 + 1;
+           
+           gl_FragColor = color; //vec4(color, 1.0);
+        }
+        ));
+        blur_shader.linkProgram();
+        
+#undef GLSL
+    }
+	
+	void loadShaderGL3()
+	{
+#define GLSL(CODE) "#version 150\n" \
+    "#ifdef GL_ES\nprecision mediump float;\n#endif\n" \
 	#CODE
-		
+
+		blur_shader.setupShaderFromSource(GL_VERTEX_SHADER, GLSL(
+			uniform mat4 modelViewProjectionMatrix;
+
+			in vec4 position;
+			in vec2 texcoord;
+
+			out vec2 vTexCoord;
+
+			void main()
+			{
+				vTexCoord = texcoord;
+
+				//gl_Position = position;
+				gl_Position = modelViewProjectionMatrix * position;
+			}
+		));
 		blur_shader.setupShaderFromSource(GL_FRAGMENT_SHADER, GLSL(
 			uniform sampler2D tex;
 			uniform vec2 direction;
 			uniform float blur_size;
 
+			in vec2 vTexCoord;
+			out vec4 colorOut;
+
 			void main() {
-				vec2 TC = gl_TexCoord[0].xy;
+				vec2 TC = vTexCoord;
 				
 				const int N = 16;
 				float delta = blur_size / float(N);
 
-				vec4 color = texture2D(tex, TC).rgba;
+				vec4 color = texture(tex, TC).rgba;
 
 				for (int i = 0; i < N; i++) {
 					vec2 d = direction * (float(i) * delta);
-					color += texture2D(tex, TC + d).rgba;
-					color += texture2D(tex, TC - d).rgba;
+					color += texture(tex, TC + d).rgba;
+					color += texture(tex, TC - d).rgba;
 				}
 				color /= float(N) * 2 + 1;
 
-                gl_FragColor = color; //vec4(color, 1.0);
+				colorOut = color; //vec4(color, 1.0);
 			}
 		));
+		blur_shader.bindDefaults();
 		blur_shader.linkProgram();
 
 #undef GLSL
